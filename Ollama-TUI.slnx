@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ollama.TUI/Ollama.TUI.csproj" />
+  </Folder>
+</Solution>
