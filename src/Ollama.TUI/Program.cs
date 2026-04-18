@@ -46,6 +46,7 @@ var promptEditor = new PromptEditor()
     .EscapeBehavior(PromptEditorEscapeBehavior.CancelCompletionOnly)
     .History(new PromptEditorHistory())
     .IsEnabled(() => modelSelected.Value && !isSending.Value)
+    .AutoFocus(() => modelSelected.Value)
     .HorizontalAlignment(Align.Stretch);
 
 // ── Actions ───────────────────────────────────────────────────────────────
@@ -174,7 +175,6 @@ void StartChat(string modelName)
     log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+Q quit[/]");
     log.AppendLine(string.Empty);
     statusText.Value = "Ready";
-    toastHost.App?.Focus(promptEditor);
 }
 
 void NewChat()
@@ -186,7 +186,6 @@ void NewChat()
     log.AppendMarkupLine("[dim]━━━ New chat ━━━[/]");
     log.AppendLine(string.Empty);
     statusText.Value = "Ready";
-    toastHost.App?.Focus(promptEditor);
 }
 
 // ── Prompt editor events ───────────────────────────────────────────────────
