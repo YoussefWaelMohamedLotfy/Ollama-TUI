@@ -37,9 +37,27 @@ jobs:
         fi
       shell: bash
 
-    - name: Upload NativeAOT artifacts
+    - name: Upload NativeAOT artifacts (Linux & macOS)
+      if: runner.os != 'Windows'
       uses: actions/upload-artifact@v7
       with:
         name: ollama-tui-nativeaot-${{ matrix.os }}
         path: ./nativeaot-publish/
+        retention-days: 7
+
+    - name: Install InnoSetup (Windows only)
+      if: runner.os == 'Windows'
+      run: choco install innosetup -y --no-progress
+
+    - name: Build Windows installer
+      if: runner.os == 'Windows'
+      run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\Ollama-TUI.iss'
+      shell: pwsh
+
+    - name: Upload Windows installer artifact
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ollama-tui-installer-windows
+        path: ./installer-output/
         retention-days: 7
