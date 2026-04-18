@@ -15,6 +15,7 @@ A fast, keyboard-driven **Terminal UI** for chatting with your local [Ollama](ht
 - **Multi-line input** — press `Ctrl+J` to insert a newline in the prompt
 - **Prompt history** — navigate previous messages with `↑` / `↓`
 - **New chat** — reset the conversation without leaving the app (`Ctrl+N`)
+- **Switch model** — return to model selection mid-session (`Ctrl+W`)
 - **Settings panel** — change the Ollama server URL and colour theme at runtime (`Ctrl+P`); settings persist to disk
 - **Three themes** — Default (dark), Light, Terminal
 - **NativeAOT** — single self-contained executable, instant startup, no .NET runtime installation needed
@@ -67,6 +68,7 @@ dotnet publish src/Ollama.TUI/Ollama.TUI.csproj --configuration Release -o ./nat
 | `Ctrl+J` | Insert newline in prompt |
 | `↑` / `↓` | Navigate prompt history |
 | `Ctrl+N` | Start a new chat (same model) |
+| `Ctrl+W` | Switch to a different model |
 | `Ctrl+P` | Open settings |
 | `Ctrl+Q` | Quit |
 

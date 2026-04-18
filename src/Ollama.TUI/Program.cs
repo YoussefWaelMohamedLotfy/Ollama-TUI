@@ -57,6 +57,7 @@ var modelListBox = new ListBox<string>()
 
 // ── Chat ───────────────────────────────────────────────────────────────────
 Chat? chat = null;
+CancellationTokenSource sendCts = new();
 var toastHost = new ToastHost();
 var log = new LogControl { MaxCapacity = 100_000 }.WrapText(true);
 var promptEditor = new PromptEditor()
@@ -67,6 +68,10 @@ var promptEditor = new PromptEditor()
     .HorizontalAlignment(Align.Stretch);
 
 // ── Actions ───────────────────────────────────────────────────────────────
+
+// Escapes [ and ] so model-generated text is never mis-parsed as markup.
+static string EscapeMarkup(string text) => text.Replace("[", "[[").Replace("]", "]]");
+
 void SendMessage(string prompt)
 {
     if (isSending.Value || chat is null || string.IsNullOrWhiteSpace(prompt)) return;
@@ -80,10 +85,15 @@ void SendMessage(string prompt)
     currentResponse.Value = string.Empty;
 
     var dispatcher = Dispatcher.Current;
+    // Capture local references so the background task is unaffected by SwitchModel()
+    // nulling the shared `chat` or replacing `sendCts`.
+    var chatRef = chat;
+    var localCts = sendCts;
+
     _ = Task.Run(async () =>
     {
         var sb = new StringBuilder();
-        var thinkSb = new StringBuilder(); // shadow — readable on background thread
+        var thinkSb = new StringBuilder();
         var thinkingLogged = false;
 
         void OnThink(object? _, string token)
@@ -95,27 +105,30 @@ void SendMessage(string prompt)
 
         void OnToolCall(object? _, OllamaSharp.Models.Chat.Message.ToolCall toolCall)
         {
-            var name = toolCall.Function?.Name ?? "unknown";
+            var name = EscapeMarkup(toolCall.Function?.Name ?? "unknown");
             _ = dispatcher.InvokeAsync(() =>
                 log.AppendMarkupLine($"[magenta]⚙ Calling tool: {name}()[/]"));
         }
 
         void OnToolResult(object? _, OllamaSharp.Tools.ToolResult result)
         {
-            var name = result.Tool?.Function?.Name ?? "unknown";
+            var name = EscapeMarkup(result.Tool?.Function?.Name ?? "unknown");
             var value = result.Result?.ToString() ?? string.Empty;
             _ = dispatcher.InvokeAsync(() =>
-                log.AppendMarkupLine($"[magenta]⚙ Tool result ({name}): {value}[/]"));
+            {
+                log.AppendMarkupLine($"[magenta]⚙ Tool result ({name}):[/]");
+                log.AppendLine(value);
+            });
         }
 
-        chat.OnThink += OnThink;
-        chat.OnToolCall += OnToolCall;
-        chat.OnToolResult += OnToolResult;
+        chatRef.OnThink += OnThink;
+        chatRef.OnToolCall += OnToolCall;
+        chatRef.OnToolResult += OnToolResult;
 
         try
         {
             var tools = new OllamaSharp.Models.Chat.Tool[] { new DateTimeTool() };
-            await foreach (var token in chat.SendAsync(prompt, tools, imagesAsBase64: null, format: null, cancellationToken: default))
+            await foreach (var token in chatRef.SendAsync(prompt, tools, imagesAsBase64: null, format: null, cancellationToken: localCts.Token))
             {
                 if (token is null) continue;
 
@@ -125,7 +138,7 @@ void SendMessage(string prompt)
                     await dispatcher.InvokeAsync(() =>
                     {
                         log.AppendMarkupLine("[dim]💭 Thinking…[/]");
-                        log.AppendMarkupLine($"[dim]{thinkSnapshot}[/]");
+                        log.AppendLine(thinkSnapshot); // plain text — never parsed as markup
                         log.AppendLine(string.Empty);
                         currentThinking.Value = null;
                     });
@@ -144,7 +157,7 @@ void SendMessage(string prompt)
                 await dispatcher.InvokeAsync(() =>
                 {
                     log.AppendMarkupLine("[dim]💭 Thinking…[/]");
-                    log.AppendMarkupLine($"[dim]{remainingThink}[/]");
+                    log.AppendLine(remainingThink); // plain text — never parsed as markup
                     log.AppendLine(string.Empty);
                     currentThinking.Value = null;
                 });
@@ -153,7 +166,7 @@ void SendMessage(string prompt)
             var finalText = sb.ToString();
             await dispatcher.InvokeAsync(() =>
             {
-                log.AppendMarkupLine($"[success bold]Assistant[/] [dim]({selectedModel.Value})[/]");
+                log.AppendMarkupLine($"[success bold]Assistant[/] [dim]({EscapeMarkup(selectedModel.Value ?? string.Empty)})[/]");
                 log.AppendLine(finalText);
                 log.AppendLine(string.Empty);
                 currentResponse.Value = null;
@@ -161,35 +174,49 @@ void SendMessage(string prompt)
                 statusText.Value = "Ready";
             });
         }
+        catch (OperationCanceledException)
+        {
+            // Model was switched or chat was reset — nothing to do, UI already cleaned up.
+        }
         catch (Exception ex)
         {
-            await dispatcher.InvokeAsync(() =>
+            if (!localCts.IsCancellationRequested)
             {
-                log.AppendMarkupLine($"[error]Error: {ex.Message}[/]");
-                currentThinking.Value = null;
-                currentResponse.Value = null;
-                isSending.Value = false;
-                statusText.Value = "Error — check Ollama connection";
-            });
+                await dispatcher.InvokeAsync(() =>
+                {
+                    log.AppendMarkupLine("[error]Error:[/]");
+                    log.AppendLine(ex.Message); // plain text — never parsed as markup
+                    currentThinking.Value = null;
+                    currentResponse.Value = null;
+                    isSending.Value = false;
+                    statusText.Value = "Error — check Ollama connection";
+                });
+            }
         }
         finally
         {
-            chat.OnThink -= OnThink;
-            chat.OnToolCall -= OnToolCall;
-            chat.OnToolResult -= OnToolResult;
-            await dispatcher.InvokeAsync(() => currentThinking.Value = null);
+            chatRef.OnThink -= OnThink;
+            chatRef.OnToolCall -= OnToolCall;
+            chatRef.OnToolResult -= OnToolResult;
+            if (!localCts.IsCancellationRequested)
+            {
+                await dispatcher.InvokeAsync(() => currentThinking.Value = null);
+            }
         }
     });
 }
 
 void StartChat(string modelName)
 {
+    sendCts = new CancellationTokenSource();
     ollama.SelectedModel = modelName;
     chat = new Chat(ollama) { Think = true };
     selectedModel.Value = modelName;
     modelSelected.Value = true;
-    log.AppendMarkupLine($"[dim]━━━ Chat started with [accent]{modelName}[/] ━━━[/]");
-    log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+Q quit[/]");
+    settings.SelectedModel = modelName;
+    SettingsService.Save(settings);
+    log.AppendMarkupLine($"[dim]━━━ Chat started with [accent]{EscapeMarkup(modelName)}[/] ━━━[/]");
+    log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+Q quit[/]");
     log.AppendLine(string.Empty);
     statusText.Value = "Ready";
 }
@@ -198,6 +225,7 @@ void NewChat()
 {
     if (selectedModel.Value is not { } model) return;
 
+    sendCts = new CancellationTokenSource();
     ollama.SelectedModel = model;
     chat = new Chat(ollama) { Think = true };
     log.AppendMarkupLine("[dim]━━━ New chat ━━━[/]");
@@ -205,8 +233,22 @@ void NewChat()
     statusText.Value = "Ready";
 }
 
+void SwitchModel()
+{
+    if (!modelSelected.Value) return;
+    sendCts.Cancel();
+    isSending.Value = false;
+    currentResponse.Value = null;
+    currentThinking.Value = null;
+    modelSelected.Value = false;
+    selectedModel.Value = null;
+    chat = null;
+    statusText.Value = "Select a model";
+}
+
 void RefreshModels()
 {
+    sendCts.Cancel();
     modelsLoaded.Value = false;
     modelLoadStarted = false;
     modelItems.Clear();
@@ -218,6 +260,8 @@ void RefreshModels()
     currentResponse.Value = null;
     isSending.Value = false;
     statusText.Value = "Connecting to Ollama…";
+    settings.SelectedModel = null;
+    SettingsService.Save(settings);
 }
 
 // ── Prompt editor events ───────────────────────────────────────────────────
@@ -251,6 +295,14 @@ modelListBox.KeyDown((_, e) =>
     }
 });
 
+// Pre-create the loaded-state VStack so modelListBox/selectButton are never re-parented
+// on subsequent re-evaluations (would throw "visual already has a parent").
+var modelBodyLoaded = (Visual)new VStack(
+    new TextBlock(() => $"{modelItems.Count} model(s) available — Enter or double-click to start") { Wrap = true },
+    modelListBox,
+    selectButton
+).Spacing(1).HorizontalAlignment(Align.Stretch);
+
 var modelScreenBody = new ComputedVisual(() =>
 {
     if (!modelsLoaded.Value)
@@ -263,11 +315,7 @@ var modelScreenBody = new ComputedVisual(() =>
             new Markup("[accent]  ollama pull llama3.2[/]") { Wrap = true }
         ).Spacing(1);
 
-    return (Visual)new VStack(
-        new TextBlock(() => $"{modelItems.Count} model(s) available — Enter or double-click to start") { Wrap = true },
-        modelListBox,
-        selectButton
-    ).Spacing(1).HorizontalAlignment(Align.Stretch);
+    return modelBodyLoaded;
 });
 
 var modelScreen = new Center(
@@ -397,7 +445,7 @@ var header = new Header
 var footer = new Footer
 {
     Left = new TextBlock(() => $"Status: {statusText.Value}") { Wrap = true },
-    Right = new Markup("[dim]Ctrl+Q quit  •  Ctrl+N new chat  •  Ctrl+P settings[/]") { Wrap = true },
+    Right = new Markup("[dim]Ctrl+Q quit  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+P settings[/]") { Wrap = true },
 };
 
 var root = new DockLayout()
@@ -431,6 +479,17 @@ toastHost.AddCommand(new Command
     Importance = CommandImportance.Primary,
     Presentation = CommandPresentation.CommandBar | CommandPresentation.CommandPalette,
     Execute = _ => NewChat(),
+});
+
+toastHost.AddCommand(new Command
+{
+    Id = "App.SwitchModel",
+    LabelMarkup = "Switch Model",
+    DescriptionMarkup = "Go back to model selection",
+    Gesture = new KeyGesture(TerminalChar.CtrlW, TerminalModifiers.Ctrl),
+    Importance = CommandImportance.Primary,
+    Presentation = CommandPresentation.CommandBar | CommandPresentation.CommandPalette,
+    Execute = _ => SwitchModel(),
 });
 
 toastHost.AddCommand(new Command
@@ -469,10 +528,20 @@ Func<TerminalRunningContext, ValueTask<TerminalLoopResult>> loopFunc= async (ctx
                     modelListBox.Items.Add(name);
                 }
             }
-            if (modelItems.Count > 0)
-                modelListBox.SelectedIndex = 0;
             modelsLoaded.Value = true;
-            statusText.Value = modelItems.Count > 0 ? "Select a model" : "No models found";
+            if (modelItems.Count > 0)
+            {
+                var lastIndex = settings.SelectedModel is not null
+                    ? modelItems.IndexOf(settings.SelectedModel)
+                    : -1;
+                var startIndex = lastIndex >= 0 ? lastIndex : 0;
+                modelListBox.SelectedIndex = startIndex;
+                StartChat(modelItems[startIndex]);
+            }
+            else
+            {
+                statusText.Value = "No models found";
+            }
         }
         catch (Exception ex)
         {
