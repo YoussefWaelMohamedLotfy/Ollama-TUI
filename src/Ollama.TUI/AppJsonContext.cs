@@ -34,6 +34,7 @@ namespace Ollama.TUI;
 [JsonSerializable(typeof(ChatRequest))]
 [JsonSerializable(typeof(ChatDoneResponseStream))]
 [JsonSerializable(typeof(ChatResponseStream))]
+[JsonSerializable(typeof(DateTimeTool))]
 [JsonSerializable(typeof(JsonNode))]
 [JsonSerializable(typeof(JsonElement))]
 internal partial class AppJsonContext : JsonSerializerContext;

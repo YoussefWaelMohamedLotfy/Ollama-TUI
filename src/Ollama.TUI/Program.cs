@@ -29,6 +29,7 @@ State<string?> selectedModel = new(null);
 State<string> statusText = new("Connecting to Ollama…");
 State<bool> isSending = new(false);
 State<string?> currentResponse = new(null);
+State<string?> currentThinking = new(null);
 
 // ── Model list ─────────────────────────────────────────────────────────────
 var modelItems = new List<string>();
@@ -60,21 +61,79 @@ void SendMessage(string prompt)
     statusText.Value = "Thinking…";
     currentResponse.Value = string.Empty;
 
+    var dispatcher = Dispatcher.Current;
     _ = Task.Run(async () =>
     {
         var sb = new StringBuilder();
+        var thinkSb = new StringBuilder(); // shadow — readable on background thread
+        var thinkingLogged = false;
+
+        void OnThink(object? _, string token)
+        {
+            thinkSb.Append(token);
+            var snapshot = thinkSb.ToString();
+            _ = dispatcher.InvokeAsync(() => currentThinking.Value = snapshot);
+        }
+
+        void OnToolCall(object? _, OllamaSharp.Models.Chat.Message.ToolCall toolCall)
+        {
+            var name = toolCall.Function?.Name ?? "unknown";
+            _ = dispatcher.InvokeAsync(() =>
+                log.AppendMarkupLine($"[magenta]⚙ Calling tool: {name}()[/]"));
+        }
+
+        void OnToolResult(object? _, OllamaSharp.Tools.ToolResult result)
+        {
+            var name = result.Tool?.Function?.Name ?? "unknown";
+            var value = result.Result?.ToString() ?? string.Empty;
+            _ = dispatcher.InvokeAsync(() =>
+                log.AppendMarkupLine($"[magenta]⚙ Tool result ({name}): {value}[/]"));
+        }
+
+        chat.OnThink += OnThink;
+        chat.OnToolCall += OnToolCall;
+        chat.OnToolResult += OnToolResult;
+
         try
         {
-            await foreach (var token in chat.SendAsync(prompt))
+            var tools = new OllamaSharp.Models.Chat.Tool[] { new DateTimeTool() };
+            await foreach (var token in chat.SendAsync(prompt, tools, imagesAsBase64: null, format: null, cancellationToken: default))
             {
                 if (token is null) continue;
+
+                if (!thinkingLogged && thinkSb.Length > 0)
+                {
+                    var thinkSnapshot = thinkSb.ToString();
+                    await dispatcher.InvokeAsync(() =>
+                    {
+                        log.AppendMarkupLine("[dim]💭 Thinking…[/]");
+                        log.AppendMarkupLine($"[dim]{thinkSnapshot}[/]");
+                        log.AppendLine(string.Empty);
+                        currentThinking.Value = null;
+                    });
+                    thinkingLogged = true;
+                }
+
                 sb.Append(token);
                 var snapshot = sb.ToString();
-                await Dispatcher.Current.InvokeAsync(() => currentResponse.Value = snapshot);
+                await dispatcher.InvokeAsync(() => currentResponse.Value = snapshot);
+            }
+
+            // Flush any remaining thinking content not yet shown
+            if (!thinkingLogged && thinkSb.Length > 0)
+            {
+                var remainingThink = thinkSb.ToString();
+                await dispatcher.InvokeAsync(() =>
+                {
+                    log.AppendMarkupLine("[dim]💭 Thinking…[/]");
+                    log.AppendMarkupLine($"[dim]{remainingThink}[/]");
+                    log.AppendLine(string.Empty);
+                    currentThinking.Value = null;
+                });
             }
 
             var finalText = sb.ToString();
-            await Dispatcher.Current.InvokeAsync(() =>
+            await dispatcher.InvokeAsync(() =>
             {
                 log.AppendMarkupLine($"[success bold]Assistant[/] [dim]({selectedModel.Value})[/]");
                 log.AppendLine(finalText);
@@ -86,13 +145,21 @@ void SendMessage(string prompt)
         }
         catch (Exception ex)
         {
-            await Dispatcher.Current.InvokeAsync(() =>
+            await dispatcher.InvokeAsync(() =>
             {
                 log.AppendMarkupLine($"[error]Error: {ex.Message}[/]");
+                currentThinking.Value = null;
                 currentResponse.Value = null;
                 isSending.Value = false;
                 statusText.Value = "Error — check Ollama connection";
             });
+        }
+        finally
+        {
+            chat.OnThink -= OnThink;
+            chat.OnToolCall -= OnToolCall;
+            chat.OnToolResult -= OnToolResult;
+            await dispatcher.InvokeAsync(() => currentThinking.Value = null);
         }
     });
 }
@@ -100,7 +167,7 @@ void SendMessage(string prompt)
 void StartChat(string modelName)
 {
     ollama.SelectedModel = modelName;
-    chat = new Chat(ollama);
+    chat = new Chat(ollama) { Think = true };
     selectedModel.Value = modelName;
     modelSelected.Value = true;
     log.AppendMarkupLine($"[dim]━━━ Chat started with [accent]{modelName}[/] ━━━[/]");
@@ -115,7 +182,7 @@ void NewChat()
     if (selectedModel.Value is not { } model) return;
 
     ollama.SelectedModel = model;
-    chat = new Chat(ollama);
+    chat = new Chat(ollama) { Think = true };
     log.AppendMarkupLine("[dim]━━━ New chat ━━━[/]");
     log.AppendLine(string.Empty);
     statusText.Value = "Ready";
@@ -183,6 +250,17 @@ var modelScreen = new Center(
 );
 
 // ── Chat screen ────────────────────────────────────────────────────────────
+var thinkingPanel = new ComputedVisual(() =>
+{
+    if (currentThinking.Value is not { Length: > 0 } thinking) return null;
+
+    return (Visual)new Group()
+        .TopLeftText("[dim] 💭 Thinking…[/]")
+        .Padding(1)
+        .Content(new TextBlock(() => currentThinking.Value ?? string.Empty).Wrap(true))
+        .HorizontalAlignment(Align.Stretch);
+});
+
 var streamingPanel = new ComputedVisual(() =>
 {
     if (!isSending.Value) return null;
@@ -216,7 +294,7 @@ var inputArea = new Group()
 
 var chatScreen = new DockLayout()
     .Content(log.HorizontalAlignment(Align.Stretch).VerticalAlignment(Align.Stretch))
-    .Bottom(new VStack(streamingPanel, inputArea).Spacing(0).HorizontalAlignment(Align.Stretch))
+    .Bottom(new VStack(thinkingPanel, streamingPanel, inputArea).Spacing(0).HorizontalAlignment(Align.Stretch))
     .HorizontalAlignment(Align.Stretch)
     .VerticalAlignment(Align.Stretch);
 
