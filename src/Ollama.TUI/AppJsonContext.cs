@@ -37,4 +37,5 @@ namespace Ollama.TUI;
 [JsonSerializable(typeof(DateTimeTool))]
 [JsonSerializable(typeof(JsonNode))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(AppSettings))]
 internal partial class AppJsonContext : JsonSerializerContext;
