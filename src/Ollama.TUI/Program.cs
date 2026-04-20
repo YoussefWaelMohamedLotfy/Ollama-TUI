@@ -3,6 +3,8 @@ using System.Text;
 using Ollama.TUI;
 
 using OllamaSharp;
+using OllamaSharp.Models;
+using OllamaSharp.Models.Chat;
 
 using XenoAtom.Terminal;
 using XenoAtom.Terminal.UI;
@@ -31,6 +33,7 @@ State<string> statusText = new("Connecting to Ollama…");
 State<bool> isSending = new(false);
 State<string?> currentResponse = new(null);
 State<string?> currentThinking = new(null);
+State<bool> currentModelSupportsThinking = new(false);
 State<bool> settingsOpen = new(false);
 State<Theme> currentTheme = new(SettingsService.ToTheme(settings.Theme));
 State<string> serverUrlDisplay = new(settings.OllamaServerUrl);
@@ -50,6 +53,7 @@ settingsThemeListBox.SelectedIndex = Math.Max(0, Array.IndexOf(themeChoices, set
 
 // ── Model list ─────────────────────────────────────────────────────────────
 var modelItems = new List<string>();
+var modelThinkingModes = new Dictionary<string, ThinkValue?>(StringComparer.OrdinalIgnoreCase);
 var modelListBox = new ListBox<string>()
     .MinHeight(6)
     .MaxHeight(16)
@@ -72,6 +76,58 @@ var promptEditor = new PromptEditor()
 // Escapes [ and ] so model-generated text is never mis-parsed as markup.
 static string EscapeMarkup(string text) => text.Replace("[", "[[").Replace("]", "]]");
 
+static bool HasCapability(ShowModelResponse? response, string capability) =>
+    response?.Capabilities?.Any(value => string.Equals(value, capability, StringComparison.OrdinalIgnoreCase)) == true;
+
+static bool HasFamily(Details? details, string family) =>
+    string.Equals(details?.Family, family, StringComparison.OrdinalIgnoreCase) ||
+    details?.Families?.Any(value => string.Equals(value, family, StringComparison.OrdinalIgnoreCase)) == true;
+
+static ThinkValue? GetThinkingMode(ShowModelResponse? response)
+{
+    if (!HasCapability(response, "thinking"))
+        return null;
+
+    if (HasFamily(response?.Details, "gpt_oss"))
+        return ThinkValue.Medium;
+
+    ThinkValue enabledThinking = true;
+    return enabledThinking;
+}
+
+ThinkValue? GetThinkingModeForModel(string modelName)
+{
+    if (modelThinkingModes.TryGetValue(modelName, out var cachedThinkingMode))
+        return cachedThinkingMode;
+
+    try
+    {
+        var response = ollama.ShowModelAsync(new ShowModelRequest { Model = modelName }).GetAwaiter().GetResult();
+        var thinkingMode = GetThinkingMode(response);
+        modelThinkingModes[modelName] = thinkingMode;
+        return thinkingMode;
+    }
+    catch (Exception ex)
+    {
+        modelThinkingModes[modelName] = null;
+        ToastService.Warning($"Could not inspect {modelName} capabilities, so thinking was disabled. {ex.Message}");
+        return null;
+    }
+}
+
+void ResetChatScreen(string titleMarkup)
+{
+    log.Clear();
+    log.AppendMarkupLine(titleMarkup);
+    log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+Q quit[/]");
+    log.AppendLine(string.Empty);
+    currentThinking.Value = null;
+    currentResponse.Value = null;
+    promptEditor.Text = null;
+    isSending.Value = false;
+    statusText.Value = "Ready";
+}
+
 void SendMessage(string prompt)
 {
     if (isSending.Value || chat is null || string.IsNullOrWhiteSpace(prompt)) return;
@@ -81,7 +137,7 @@ void SendMessage(string prompt)
     log.AppendLine(string.Empty);
 
     isSending.Value = true;
-    statusText.Value = "Thinking…";
+    statusText.Value = currentModelSupportsThinking.Value ? "Thinking…" : "Generating…";
     currentResponse.Value = string.Empty;
 
     var dispatcher = Dispatcher.Current;
@@ -127,7 +183,7 @@ void SendMessage(string prompt)
 
         try
         {
-            var tools = new OllamaSharp.Models.Chat.Tool[] { new DateTimeTool() };
+            var tools = new Tool[] { new DateTimeTool() };
             await foreach (var token in chatRef.SendAsync(prompt, tools, imagesAsBase64: null, format: null, cancellationToken: localCts.Token))
             {
                 if (token is null) continue;
@@ -210,27 +266,27 @@ void StartChat(string modelName)
 {
     sendCts = new CancellationTokenSource();
     ollama.SelectedModel = modelName;
-    chat = new Chat(ollama) { Think = true };
+    var thinkingMode = GetThinkingModeForModel(modelName);
+    chat = new Chat(ollama) { Think = thinkingMode };
+    currentModelSupportsThinking.Value = thinkingMode is not null;
     selectedModel.Value = modelName;
     modelSelected.Value = true;
     settings.SelectedModel = modelName;
     SettingsService.Save(settings);
-    log.AppendMarkupLine($"[dim]━━━ Chat started with [accent]{EscapeMarkup(modelName)}[/] ━━━[/]");
-    log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+Q quit[/]");
-    log.AppendLine(string.Empty);
-    statusText.Value = "Ready";
+    ResetChatScreen($"[dim]━━━ Chat started with [accent]{EscapeMarkup(modelName)}[/] ━━━[/]");
 }
 
 void NewChat()
 {
     if (selectedModel.Value is not { } model) return;
 
+    sendCts.Cancel();
     sendCts = new CancellationTokenSource();
     ollama.SelectedModel = model;
-    chat = new Chat(ollama) { Think = true };
-    log.AppendMarkupLine("[dim]━━━ New chat ━━━[/]");
-    log.AppendLine(string.Empty);
-    statusText.Value = "Ready";
+    var thinkingMode = GetThinkingModeForModel(model);
+    chat = new Chat(ollama) { Think = thinkingMode };
+    currentModelSupportsThinking.Value = thinkingMode is not null;
+    ResetChatScreen($"[dim]━━━ New chat with [accent]{EscapeMarkup(model)}[/] ━━━[/]");
 }
 
 void SwitchModel()
@@ -240,6 +296,7 @@ void SwitchModel()
     isSending.Value = false;
     currentResponse.Value = null;
     currentThinking.Value = null;
+    currentModelSupportsThinking.Value = false;
     modelSelected.Value = false;
     selectedModel.Value = null;
     chat = null;
@@ -258,6 +315,7 @@ void RefreshModels()
     chat = null;
     currentThinking.Value = null;
     currentResponse.Value = null;
+    currentModelSupportsThinking.Value = false;
     isSending.Value = false;
     statusText.Value = "Connecting to Ollama…";
     settings.SelectedModel = null;
@@ -439,7 +497,7 @@ var header = new Header
 {
     Left = new Markup("[bold] Ollama TUI[/]") { Wrap = true },
     Center = new TextBlock(() => selectedModel.Value is { } m ? $"Model: {m}" : "Select a model to get started") { Wrap = true },
-    Right = new TextBlock(() => isSending.Value ? "Thinking…" : statusText.Value) { Wrap = true },
+    Right = new TextBlock(() => isSending.Value ? (currentModelSupportsThinking.Value ? "Thinking…" : "Generating…") : statusText.Value) { Wrap = true },
 };
 
 var footer = new Footer
