@@ -25,6 +25,8 @@ var ollama = new OllamaApiClient(new OllamaApiClient.Configuration
 });
 
 // ── App state ─────────────────────────────────────────────────────────────
+State<bool> splashDone = new(false);
+State<int> splashFrame = new(0);
 State<bool> exit = new(false);
 State<bool> modelsLoaded = new(false);
 State<bool> modelSelected = new(false);
@@ -492,6 +494,64 @@ var settingsScreen = new Center(
         .HorizontalAlignment(Align.Stretch)
 );
 
+// ── Splash screen ─────────────────────────────────────────────────────────
+// ~1.5 s at 16 ms per frame: 4 ASCII lines revealed one-by-one, then a
+// loading bar that fills to 100 % before handing off to the main UI.
+const int SplashDuration = 90;
+
+string[] splashAscii =
+[
+    @"  ___   _  _                      _____  _   _  ___ ",
+    @" / _ \ | || | __ _  _ __   __ _  |_   _|| | | ||_ _|",
+    @"| (_) || || |/ _` || '  \ / _` |   | |  | |_| | | | ",
+    @" \___/ |_||_|\__,_||_|_|_|\__,_|   |_|   \___/ |___|",
+];
+
+const int SplashAsciiLines = 4;
+const int SplashBarDelayFrames = 5;   // pause after last ASCII line before bar appears
+const int SplashColorTransitionFrame = 12; // frame at which art color brightens
+const int SplashTaglineDelay = 3;     // frames after bar start before tagline appears
+const int SplashBarStart = SplashAsciiLines * 8 + SplashBarDelayFrames; // frame when bar first appears
+const int SplashBarWidth = 44;
+
+var splashScreen = new Center(
+    new VStack(
+        new ComputedVisual(() =>
+        {
+            int frame = splashFrame.Value;
+            // Reveal one ASCII art line per 8 frames; first line shows immediately.
+            int visibleLines = Math.Min(SplashAsciiLines, frame / 8 + 1);
+            string color = frame < SplashColorTransitionFrame ? "dim" : "accent bold";
+
+            var artLines = new List<Visual>();
+            for (int i = 0; i < SplashAsciiLines; i++)
+            {
+                artLines.Add(i < visibleLines
+                    ? (Visual)new Markup($"[{color}]{splashAscii[i]}[/]") { Wrap = false }
+                    : new TextBlock(string.Empty) { Wrap = false });
+            }
+            return (Visual)new VStack(artLines.ToArray()).Spacing(0);
+        }),
+        new TextBlock(string.Empty) { Wrap = false },
+        new ComputedVisual(() =>
+        {
+            int frame = splashFrame.Value;
+            if (frame < SplashBarStart) return null;
+
+            int denom = Math.Max(1, SplashDuration - SplashBarStart - 1);
+            int filled = Math.Min(SplashBarWidth, (frame - SplashBarStart) * SplashBarWidth / denom);
+            string bar = new string('━', filled) + new string('─', SplashBarWidth - filled);
+            return (Visual)new Markup($"  [dim]┤{bar}├[/]") { Wrap = false };
+        }),
+        new ComputedVisual(() =>
+        {
+            int frame = splashFrame.Value;
+            if (frame < SplashBarStart + SplashTaglineDelay) return null;
+            return (Visual)new Markup("  [dim]Your local AI companion[/]") { Wrap = false };
+        })
+    ).Spacing(0)
+);
+
 // ── Main layout ────────────────────────────────────────────────────────────
 var header = new Header
 {
@@ -506,10 +566,15 @@ var footer = new Footer
     Right = new Markup("[dim]Ctrl+Q quit  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+P settings[/]") { Wrap = true },
 };
 
-var root = new DockLayout()
+var mainLayout = new DockLayout()
     .Top(header)
     .Content(new ComputedVisual(() => settingsOpen.Value ? (Visual)settingsScreen : modelSelected.Value ? chatScreen : modelScreen))
     .Bottom(new VStack(new CommandBar(), footer).Spacing(0))
+    .HorizontalAlignment(Align.Stretch)
+    .VerticalAlignment(Align.Stretch);
+
+// Root switches between full-screen splash and the main layout.
+var root = new ComputedVisual(() => splashDone.Value ? (Visual)mainLayout : splashScreen)
     .HorizontalAlignment(Align.Stretch)
     .VerticalAlignment(Align.Stretch);
 
@@ -570,6 +635,16 @@ toastHost.AddCommand(new Command
 Func<TerminalRunningContext, ValueTask<TerminalLoopResult>> loopFunc= async (ctx) =>
 {
     if (exit.Value) return TerminalLoopResult.Stop;
+
+    // Advance the splash animation; model loading starts only after it finishes.
+    if (!splashDone.Value)
+    {
+        splashFrame.Value++;
+        if (splashFrame.Value >= SplashDuration)
+            splashDone.Value = true;
+        await Task.Delay(16);
+        return TerminalLoopResult.Continue;
+    }
 
     if (!modelLoadStarted)
     {
