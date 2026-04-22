@@ -497,7 +497,7 @@ var settingsScreen = new Center(
 // ── Splash screen ─────────────────────────────────────────────────────────
 // ~1.5 s at 16 ms per frame: 4 ASCII lines revealed one-by-one, then a
 // loading bar that fills to 100 % before handing off to the main UI.
-const int SplashDuration = 90;
+const int SplashDuration = 110;
 
 string[] splashAscii =
 [
