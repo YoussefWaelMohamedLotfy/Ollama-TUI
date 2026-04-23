@@ -58,18 +58,16 @@ settingsThemeListBox.SelectedIndex = Math.Max(0, Array.IndexOf(themeChoices, set
 // Each entry describes one available tool. Enabled state is persisted in settings.
 var toolRegistry = new (string Id, string Label, string Description, Func<OllamaSharp.Models.Chat.Tool> Create)[]
 {
-    ("get_current_datetime", "DateTime",        "Gets the current local date and time",              () => new DateTimeTool()),
     ("read_file",            "Read File",        "Reads the text contents of a file",                 () => new ReadFileTool()),
     ("write_file",           "Write File",       "Writes text content to a file (create/overwrite)",  () => new WriteFileTool()),
     ("list_directory",       "List Directory",   "Lists files and subdirectories in a directory",     () => new ListDirectoryTool()),
     ("create_directory",     "Create Directory", "Creates a new directory at the given path",         () => new CreateDirectoryTool()),
 };
 
-OllamaSharp.Models.Chat.Tool[] GetEnabledTools() =>
-    toolRegistry
+Tool[] GetEnabledTools() =>
+    [.. toolRegistry
         .Where(t => settings.McpToolsEnabled.GetValueOrDefault(t.Id, true))
-        .Select(t => t.Create())
-        .ToArray();
+        .Select(t => t.Create())];
 
 // ── MCP tools screen ──────────────────────────────────────────────────────
 var mcpToolsListBox = new ListBox<string>()
