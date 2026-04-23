@@ -37,6 +37,7 @@ State<string?> currentResponse = new(null);
 State<string?> currentThinking = new(null);
 State<bool> currentModelSupportsThinking = new(false);
 State<bool> settingsOpen = new(false);
+State<bool> mcpToolsOpen = new(false);
 State<Theme> currentTheme = new(SettingsService.ToTheme(settings.Theme));
 State<string> serverUrlDisplay = new(settings.OllamaServerUrl);
 var modelLoadStarted = false;
@@ -52,6 +53,87 @@ settingsThemeListBox.Items.Add("Default (Dark)");
 settingsThemeListBox.Items.Add("Light");
 settingsThemeListBox.Items.Add("Terminal");
 settingsThemeListBox.SelectedIndex = Math.Max(0, Array.IndexOf(themeChoices, settings.Theme));
+
+// ── MCP tool registry ─────────────────────────────────────────────────────
+// Each entry describes one available tool. Enabled state is persisted in settings.
+var toolRegistry = new (string Id, string Label, string Description, Func<OllamaSharp.Models.Chat.Tool> Create)[]
+{
+    ("get_current_datetime", "DateTime",        "Gets the current local date and time",              () => new DateTimeTool()),
+    ("read_file",            "Read File",        "Reads the text contents of a file",                 () => new ReadFileTool()),
+    ("write_file",           "Write File",       "Writes text content to a file (create/overwrite)",  () => new WriteFileTool()),
+    ("list_directory",       "List Directory",   "Lists files and subdirectories in a directory",     () => new ListDirectoryTool()),
+    ("create_directory",     "Create Directory", "Creates a new directory at the given path",         () => new CreateDirectoryTool()),
+};
+
+OllamaSharp.Models.Chat.Tool[] GetEnabledTools() =>
+    toolRegistry
+        .Where(t => settings.McpToolsEnabled.GetValueOrDefault(t.Id, true))
+        .Select(t => t.Create())
+        .ToArray();
+
+// ── MCP tools screen ──────────────────────────────────────────────────────
+var mcpToolsListBox = new ListBox<string>()
+    .MinHeight(5)
+    .MaxHeight(10)
+    .HorizontalAlignment(Align.Stretch);
+
+int mcpLabelWidth = toolRegistry.Max(t => t.Label.Length);
+
+void RebuildMcpToolsList()
+{
+    mcpToolsListBox.Items.Clear();
+    foreach (var (id, label, description, _) in toolRegistry)
+    {
+        var enabled = settings.McpToolsEnabled.GetValueOrDefault(id, true);
+        mcpToolsListBox.Items.Add($"{(enabled ? "✓" : "✗")}  {label.PadRight(mcpLabelWidth)}  {description}");
+    }
+}
+RebuildMcpToolsList();
+
+void ToggleSelectedMcpTool()
+{
+    var idx = mcpToolsListBox.SelectedIndex;
+    if (idx < 0 || idx >= toolRegistry.Length) return;
+    var id = toolRegistry[idx].Id;
+    var current = settings.McpToolsEnabled.GetValueOrDefault(id, true);
+    settings.McpToolsEnabled[id] = !current;
+    SettingsService.Save(settings);
+    RebuildMcpToolsList();
+    mcpToolsListBox.SelectedIndex = idx;
+}
+
+var mcpToggleButton = new Button("Toggle Enable/Disable").Tone(ControlTone.Primary)
+    .IsEnabled(() => mcpToolsListBox.SelectedIndex >= 0);
+var mcpCloseButton = new Button("Close");
+
+mcpToggleButton.Click(() => ToggleSelectedMcpTool());
+
+mcpCloseButton.Click(() => mcpToolsOpen.Value = false);
+
+mcpToolsListBox.KeyDown((_, e) =>
+{
+    if (e.Key == TerminalKey.Enter || e.Key == TerminalKey.Space)
+    {
+        ToggleSelectedMcpTool();
+        e.Handled = true;
+    }
+});
+
+var mcpToolsScreen = new Center(
+    new Group()
+        .TopLeftText(" 🔧 MCP Tools")
+        .Padding(2)
+        .MaxWidth(80)
+        .Content(
+            new VStack(
+                new TextBlock("Select a tool and press Toggle (or Enter/Space) to enable or disable it.") { Wrap = true },
+                new TextBlock("Enabled tools (✓) are sent with every chat message to the model.") { Wrap = true },
+                mcpToolsListBox,
+                new HStack(mcpToggleButton, mcpCloseButton).Spacing(1)
+            ).Spacing(1).HorizontalAlignment(Align.Stretch)
+        )
+        .HorizontalAlignment(Align.Stretch)
+);
 
 // ── Model list ─────────────────────────────────────────────────────────────
 var modelItems = new List<string>();
@@ -121,7 +203,7 @@ void ResetChatScreen(string titleMarkup)
 {
     log.Clear();
     log.AppendMarkupLine(titleMarkup);
-    log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+Q quit[/]");
+    log.AppendMarkupLine("[dim]Enter sends  •  Ctrl+J inserts newline  •  ↑↓ history  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+T MCP tools  •  Ctrl+Q quit[/]");
     log.AppendLine(string.Empty);
     currentThinking.Value = null;
     currentResponse.Value = null;
@@ -185,7 +267,7 @@ void SendMessage(string prompt)
 
         try
         {
-            var tools = new Tool[] { new DateTimeTool() };
+            var tools = GetEnabledTools();
             await foreach (var token in chatRef.SendAsync(prompt, tools, imagesAsBase64: null, format: null, cancellationToken: localCts.Token))
             {
                 if (token is null) continue;
@@ -563,12 +645,15 @@ var header = new Header
 var footer = new Footer
 {
     Left = new TextBlock(() => $"Status: {statusText.Value}") { Wrap = true },
-    Right = new Markup("[dim]Ctrl+Q quit  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+P settings[/]") { Wrap = true },
+    Right = new Markup("[dim]Ctrl+Q quit  •  Ctrl+N new chat  •  Ctrl+W switch model  •  Ctrl+P settings  •  Ctrl+T MCP tools[/]") { Wrap = true },
 };
 
 var mainLayout = new DockLayout()
     .Top(header)
-    .Content(new ComputedVisual(() => settingsOpen.Value ? (Visual)settingsScreen : modelSelected.Value ? chatScreen : modelScreen))
+    .Content(new ComputedVisual(() =>
+        mcpToolsOpen.Value ? (Visual)mcpToolsScreen :
+        settingsOpen.Value  ? (Visual)settingsScreen  :
+        modelSelected.Value ? chatScreen              : modelScreen))
     .Bottom(new VStack(new CommandBar(), footer).Spacing(0))
     .HorizontalAlignment(Align.Stretch)
     .VerticalAlignment(Align.Stretch);
@@ -628,6 +713,21 @@ toastHost.AddCommand(new Command
         settingsUrlTextBox.Text = settings.OllamaServerUrl;
         settingsThemeListBox.SelectedIndex = Math.Max(0, Array.IndexOf(themeChoices, settings.Theme));
         settingsOpen.Value = true;
+    },
+});
+
+toastHost.AddCommand(new Command
+{
+    Id = "App.McpTools",
+    LabelMarkup = "MCP Tools",
+    DescriptionMarkup = "Manage tools available to the AI model",
+    Gesture = new KeyGesture(TerminalChar.CtrlT, TerminalModifiers.Ctrl),
+    Importance = CommandImportance.Primary,
+    Presentation = CommandPresentation.CommandBar | CommandPresentation.CommandPalette,
+    Execute = _ =>
+    {
+        RebuildMcpToolsList();
+        mcpToolsOpen.Value = true;
     },
 });
 
