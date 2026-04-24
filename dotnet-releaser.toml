@@ -1,0 +1,26 @@
+# dotnet-releaser configuration for Linux packages
+[msbuild]
+project = "src/Ollama.TUI/Ollama.TUI.csproj"
+
+[msbuild.properties]
+PublishReadyToRun = false
+PublishSingleFile = false
+
+[github]
+user = "YoussefWaelMohamedLotfy"
+repo = "Ollama-TUI"
+
+[nuget]
+publish = false
+
+[brew]
+publish = false
+
+[test]
+enable = false
+
+profile = "custom"
+
+[[pack]]
+rid = ["linux-x64"]
+kinds = ["deb", "tar"]

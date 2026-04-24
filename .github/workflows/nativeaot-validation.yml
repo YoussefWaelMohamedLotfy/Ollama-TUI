@@ -4,12 +4,68 @@ on:
   push:
 
 jobs:
-  nativeaot-build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-      fail-fast: false
+  build-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Install dotnet-releaser
+      run: dotnet tool install --global dotnet-releaser
+
+    - name: Build Linux packages
+      shell: bash
+      run: dotnet-releaser build --github-token "${{ secrets.GITHUB_TOKEN }}" dotnet-releaser.toml
+
+    - name: Upload Linux packages
+      uses: actions/upload-artifact@v7
+      with:
+        name: ollama-tui-packages-linux
+        path: artifacts-dotnet-releaser/
+        retention-days: 7
+
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Install dotnet-releaser
+      run: dotnet tool install --global dotnet-releaser
+
+    - name: Build macOS packages
+      shell: bash
+      run: dotnet-releaser build --github-token "${{ secrets.GITHUB_TOKEN }}" dotnet-releaser.macos.toml
+
+    - name: Upload macOS packages
+      uses: actions/upload-artifact@v7
+      with:
+        name: ollama-tui-packages-macos
+        path: artifacts-dotnet-releaser/
+        retention-days: 7
+
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
 
     steps:
     - uses: actions/checkout@v6
@@ -29,33 +85,17 @@ jobs:
       run: dotnet publish src/Ollama.TUI/Ollama.TUI.csproj --configuration Release --no-restore --no-build -o ./nativeaot-publish
 
     - name: Verify NativeAOT executable
-      run: |
-        if [ "${{ runner.os }}" = "Windows" ]; then
-          test -f ./nativeaot-publish/Ollama.TUI.exe
-        else
-          test -f ./nativeaot-publish/Ollama.TUI
-        fi
+      run: test -f ./nativeaot-publish/Ollama.TUI.exe
       shell: bash
 
-    - name: Upload NativeAOT artifacts (Linux & macOS)
-      if: runner.os != 'Windows'
-      uses: actions/upload-artifact@v7
-      with:
-        name: ollama-tui-nativeaot-${{ matrix.os }}
-        path: ./nativeaot-publish/
-        retention-days: 7
-
-    - name: Install InnoSetup (Windows only)
-      if: runner.os == 'Windows'
+    - name: Install InnoSetup
       run: choco install innosetup -y --no-progress
 
     - name: Build Windows installer
-      if: runner.os == 'Windows'
       run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\Ollama-TUI.iss'
       shell: pwsh
 
     - name: Upload Windows installer artifact
-      if: runner.os == 'Windows'
       uses: actions/upload-artifact@v7
       with:
         name: ollama-tui-installer-windows

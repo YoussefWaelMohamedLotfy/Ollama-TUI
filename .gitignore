@@ -63,6 +63,9 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# dotnet-releaser output
+artifacts-dotnet-releaser/
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 
