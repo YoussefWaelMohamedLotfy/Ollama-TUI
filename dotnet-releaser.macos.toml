@@ -1,4 +1,6 @@
 # dotnet-releaser configuration for macOS packages
+profile = "custom"
+
 [msbuild]
 project = "src/Ollama.TUI/Ollama.TUI.csproj"
 
@@ -18,8 +20,6 @@ publish = false
 
 [test]
 enable = false
-
-profile = "custom"
 
 [[pack]]
 rid = ["osx-arm64"]
