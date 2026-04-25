@@ -3,6 +3,9 @@ name: NativeAOT Build Validation
 on:
   push:
 
+# Declare default permissions as read only.
+permissions: read-all
+
 jobs:
   test:
     runs-on: ubuntu-latest
