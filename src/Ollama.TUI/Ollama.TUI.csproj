@@ -10,8 +10,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="OllamaSharp" Version="5.4.25" />
-		<PackageReference Include="XenoAtom.Terminal.UI" Version="2.9.3" />
+		<PackageReference Include="OllamaSharp" />
+		<PackageReference Include="XenoAtom.Terminal.UI" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Ollama.TUI.Tests" />
 	</ItemGroup>
 
 </Project>

@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="OllamaSharp" Version="5.4.25" />
+    <PackageVersion Include="TUnit" Version="1.39.0" />
+    <PackageVersion Include="XenoAtom.Terminal.UI" Version="2.9.3" />
+  </ItemGroup>
+</Project>
