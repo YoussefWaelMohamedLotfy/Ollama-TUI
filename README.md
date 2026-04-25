@@ -3,6 +3,7 @@
 A fast, keyboard-driven **Terminal UI** for chatting with your local [Ollama](https://ollama.com) models. Built with .NET 10 and compiled to a **NativeAOT** self-contained binary — no runtime required.
 
 ![NativeAOT Build Validation](https://github.com/YoussefWaelMohamedLotfy/Ollama-TUI/actions/workflows/nativeaot-validation.yml/badge.svg)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/YoussefWaelMohamedLotfy/Ollama-TUI/badge)](https://api.securityscorecards.dev/projects/github.com/YoussefWaelMohamedLotfy/Ollama-TUI)
 
 ---
 
