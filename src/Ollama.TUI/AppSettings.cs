@@ -11,7 +11,4 @@ public class AppSettings
     /// A missing entry means the tool is enabled by default.
     /// </summary>
     public Dictionary<string, bool> McpToolsEnabled { get; set; } = [];
-
-    /// <summary>User-configured external MCP servers (stdio and HTTP transports).</summary>
-    public List<McpServerConfig> McpServers { get; set; } = [];
 }

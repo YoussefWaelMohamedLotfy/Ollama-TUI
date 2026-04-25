@@ -65,280 +65,72 @@ var toolRegistry = new (string Id, string Label, string Description, Func<Ollama
     ("CreateDirectory",    "Create Directory", "Creates a new directory at the given path",         () => new CreateDirectoryTool()),
 };
 
-var mcpManager = new McpClientManager();
-Tool[] GetEnabledTools() => [.. toolRegistry.Select(t => t.Create()), .. mcpManager.McpTools];
+Tool[] GetEnabledTools() =>
+    [.. toolRegistry
+        .Where(t => settings.McpToolsEnabled.GetValueOrDefault(t.Id, true))
+        .Select(t => t.Create())];
 
+// ── MCP tools screen ──────────────────────────────────────────────────────
+var mcpToolsListBox = new ListBox<string>()
+    .MinHeight(5)
+    .MaxHeight(10)
+    .HorizontalAlignment(Align.Stretch);
+
+int mcpLabelWidth = toolRegistry.Max(t => t.Label.Length);
+
+void RebuildMcpToolsList()
+{
+    mcpToolsListBox.Items.Clear();
+    foreach (var (id, label, description, _) in toolRegistry)
+    {
+        var enabled = settings.McpToolsEnabled.GetValueOrDefault(id, true);
+        mcpToolsListBox.Items.Add($"{(enabled ? "✓" : "✗")}  {label.PadRight(mcpLabelWidth)}  {description}");
+    }
+}
+RebuildMcpToolsList();
+
+void ToggleSelectedMcpTool()
+{
+    var idx = mcpToolsListBox.SelectedIndex;
+    if (idx < 0 || idx >= toolRegistry.Length) return;
+    var id = toolRegistry[idx].Id;
+    var current = settings.McpToolsEnabled.GetValueOrDefault(id, true);
+    settings.McpToolsEnabled[id] = !current;
+    SettingsService.Save(settings);
+    RebuildMcpToolsList();
+    mcpToolsListBox.SelectedIndex = idx;
+}
+
+var mcpToggleButton = new Button("Toggle Enable/Disable").Tone(ControlTone.Primary)
+    .IsEnabled(() => mcpToolsListBox.SelectedIndex >= 0);
 var mcpCloseButton = new Button("Close");
+
+mcpToggleButton.Click(() => ToggleSelectedMcpTool());
+
 mcpCloseButton.Click(() => mcpToolsOpen.Value = false);
 
-// ── MCP Servers management ─────────────────────────────────────────────────
-var mcpServersListBox = new ListBox<string>()
-    .MinHeight(3)
-    .MaxHeight(6)
-    .HorizontalAlignment(Align.Stretch);
-State<int> mcpServerCount = new(settings.McpServers.Count);
-
-void RebuildMcpServersList()
+mcpToolsListBox.KeyDown((_, e) =>
 {
-    mcpServersListBox.Items.Clear();
-    if (settings.McpServers.Count == 0)
+    if (e.Key == TerminalKey.Enter || e.Key == TerminalKey.Space)
     {
-        mcpServersListBox.Items.Add("  (no MCP servers configured)");
-    }
-    else
-    {
-        foreach (var srv in settings.McpServers)
-        {
-            var typeName = srv.Transport == McpTransportType.Stdio ? "stdio" : "http ";
-            var detail = srv.Transport == McpTransportType.Stdio
-                ? srv.Command ?? "(no command)"
-                : srv.Url ?? "(no url)";
-            mcpServersListBox.Items.Add(
-                $"{(srv.Enabled ? "✓" : "✗")}  {srv.Name.PadRight(22)} [{typeName}]  {detail}");
-        }
-    }
-    mcpServerCount.Value = settings.McpServers.Count;
-}
-RebuildMcpServersList();
-
-var mcpAddServerButton    = new Button("Add").Tone(ControlTone.Primary);
-var mcpEditServerButton   = new Button("Edit")
-    .IsEnabled(() => mcpServerCount.Value > 0 && mcpServersListBox.SelectedIndex >= 0);
-var mcpRemoveServerButton = new Button("Remove")
-    .IsEnabled(() => mcpServerCount.Value > 0 && mcpServersListBox.SelectedIndex >= 0);
-var mcpToggleServerButton = new Button("Enable/Disable")
-    .IsEnabled(() => mcpServerCount.Value > 0 && mcpServersListBox.SelectedIndex >= 0);
-
-// ── MCP Server add/edit form ───────────────────────────────────────────────
-State<bool> mcpServerFormOpen  = new(false);
-State<bool> mcpServerFormIsEdit = new(false);
-McpServerConfig? mcpServerFormTarget = null;
-
-var serverFormNameTextBox    = new TextBox((string?)null).HorizontalAlignment(Align.Stretch);
-var serverFormTypeListBox    = new ListBox<string>().MinHeight(2).MaxHeight(2)
-    .HorizontalAlignment(Align.Stretch);
-serverFormTypeListBox.Items.Add("stdio — local process (stdin/stdout)");
-serverFormTypeListBox.Items.Add("http  — HTTP / SSE endpoint");
-serverFormTypeListBox.SelectedIndex = 0;
-State<int> serverFormTransportIdx = new(0);
-serverFormTypeListBox.BindSelectedIndex(serverFormTransportIdx);
-var serverFormCommandTextBox = new TextBox((string?)null).HorizontalAlignment(Align.Stretch);
-var serverFormArgsTextBox    = new TextBox((string?)null).HorizontalAlignment(Align.Stretch);
-var serverFormEnvVarsTextBox = new TextBox((string?)null).HorizontalAlignment(Align.Stretch);
-var serverFormUrlTextBox     = new TextBox((string?)null).HorizontalAlignment(Align.Stretch);
-var serverFormHeadersTextBox = new TextBox((string?)null).HorizontalAlignment(Align.Stretch);
-var serverFormSaveButton     = new Button("Save").Tone(ControlTone.Primary);
-var serverFormCancelButton   = new Button("Cancel");
-
-void OpenServerForm(McpServerConfig? existing = null)
-{
-    mcpServerFormIsEdit.Value       = existing is not null;
-    mcpServerFormTarget             = existing;
-    serverFormNameTextBox.Text      = existing?.Name ?? "";
-    var transportIdx = existing?.Transport == McpTransportType.Http ? 1 : 0;
-    serverFormTypeListBox.SelectedIndex = transportIdx;
-    serverFormTransportIdx.Value    = transportIdx;
-    serverFormCommandTextBox.Text   = existing?.Command ?? "";
-    serverFormArgsTextBox.Text      = existing?.Arguments ?? "";
-    serverFormEnvVarsTextBox.Text   = existing?.EnvironmentVariables ?? "";
-    serverFormUrlTextBox.Text       = existing?.Url ?? "";
-    serverFormHeadersTextBox.Text   = existing?.Headers ?? "";
-    mcpServerFormOpen.Value         = true;
-}
-
-void SaveServerForm()
-{
-    var name = serverFormNameTextBox.Text?.Trim() ?? "";
-    if (string.IsNullOrWhiteSpace(name))
-    {
-        ToastService.Error("Server name is required.");
-        return;
-    }
-
-    var transport = serverFormTypeListBox.SelectedIndex == 1
-        ? McpTransportType.Http
-        : McpTransportType.Stdio;
-
-    if (transport == McpTransportType.Stdio)
-    {
-        if (string.IsNullOrWhiteSpace(serverFormCommandTextBox.Text))
-        {
-            ToastService.Error("Command is required for stdio servers.");
-            return;
-        }
-    }
-    else
-    {
-        if (!Uri.TryCreate(serverFormUrlTextBox.Text?.Trim(), UriKind.Absolute, out _))
-        {
-            ToastService.Error("A valid absolute URL is required for HTTP servers.");
-            return;
-        }
-    }
-
-    if (mcpServerFormIsEdit.Value && mcpServerFormTarget is not null)
-    {
-        mcpServerFormTarget.Name                 = name;
-        mcpServerFormTarget.Transport            = transport;
-        mcpServerFormTarget.Command              = serverFormCommandTextBox.Text?.Trim();
-        mcpServerFormTarget.Arguments            = serverFormArgsTextBox.Text?.Trim();
-        mcpServerFormTarget.EnvironmentVariables = serverFormEnvVarsTextBox.Text?.Trim();
-        mcpServerFormTarget.Url                  = serverFormUrlTextBox.Text?.Trim();
-        mcpServerFormTarget.Headers              = serverFormHeadersTextBox.Text?.Trim();
-    }
-    else
-    {
-        settings.McpServers.Add(new McpServerConfig
-        {
-            Name                 = name,
-            Transport            = transport,
-            Command              = serverFormCommandTextBox.Text?.Trim(),
-            Arguments            = serverFormArgsTextBox.Text?.Trim(),
-            EnvironmentVariables = serverFormEnvVarsTextBox.Text?.Trim(),
-            Url                  = serverFormUrlTextBox.Text?.Trim(),
-            Headers              = serverFormHeadersTextBox.Text?.Trim(),
-        });
-    }
-
-    SettingsService.Save(settings);
-    _ = RefreshMcpAsync();
-    RebuildMcpServersList();
-    var wasEdit = mcpServerFormIsEdit.Value;
-    mcpServerFormOpen.Value = false;
-    ToastService.Success(wasEdit ? "Server updated." : "Server added.");
-}
-
-void ToggleSelectedServer()
-{
-    var idx = mcpServersListBox.SelectedIndex;
-    if (idx < 0 || idx >= settings.McpServers.Count) return;
-    settings.McpServers[idx].Enabled = !settings.McpServers[idx].Enabled;
-    SettingsService.Save(settings);
-    _ = RefreshMcpAsync();
-    RebuildMcpServersList();
-    mcpServersListBox.SelectedIndex = Math.Min(idx, settings.McpServers.Count - 1);
-}
-
-void RemoveSelectedServer()
-{
-    var idx = mcpServersListBox.SelectedIndex;
-    if (idx < 0 || idx >= settings.McpServers.Count) return;
-    settings.McpServers.RemoveAt(idx);
-    SettingsService.Save(settings);
-    _ = RefreshMcpAsync();
-    RebuildMcpServersList();
-    if (settings.McpServers.Count > 0)
-        mcpServersListBox.SelectedIndex = Math.Min(idx, settings.McpServers.Count - 1);
-}
-
-async Task RefreshMcpAsync()
-{
-    try { await mcpManager.RefreshAsync(settings.McpServers); }
-    catch (Exception ex) { ToastService.Error($"MCP refresh failed: {ex.Message}"); }
-}
-
-mcpAddServerButton.Click(()    => OpenServerForm());
-mcpEditServerButton.Click(() =>
-{
-    var idx = mcpServersListBox.SelectedIndex;
-    if (idx >= 0 && idx < settings.McpServers.Count)
-        OpenServerForm(settings.McpServers[idx]);
-});
-mcpRemoveServerButton.Click(() => RemoveSelectedServer());
-mcpToggleServerButton.Click(() => ToggleSelectedServer());
-
-serverFormSaveButton.Click(()   => SaveServerForm());
-serverFormCancelButton.Click(() => mcpServerFormOpen.Value = false);
-
-mcpServersListBox.KeyDown((_, e) =>
-{
-    if (e.Key == TerminalKey.Space)
-    {
-        ToggleSelectedServer();
-        e.Handled = true;
-    }
-    else if (e.Key == TerminalKey.Enter)
-    {
-        var idx = mcpServersListBox.SelectedIndex;
-        if (idx >= 0 && idx < settings.McpServers.Count)
-            OpenServerForm(settings.McpServers[idx]);
-        e.Handled = true;
-    }
-    else if (e.Key == TerminalKey.Delete)
-    {
-        RemoveSelectedServer();
-        e.Handled = true;
-    }
-    else if (e.Key == TerminalKey.Insert)
-    {
-        OpenServerForm();
-        e.Handled = true;
-    }
-    else if (e.Key == TerminalKey.Escape)
-    {
-        mcpToolsOpen.Value = false;
+        ToggleSelectedMcpTool();
         e.Handled = true;
     }
 });
-
-var mcpServersSection = (Visual)new VStack(
-    new TextBlock("MCP Servers") { Wrap = true },
-    new TextBlock("[A]dd  [E]dit  [R]emove  [T]oggle  —  Ins=Add  Enter=Edit  Del=Remove  Space=Toggle  Esc=Close") { Wrap = true },
-    mcpServersListBox,
-    new HStack(mcpAddServerButton, mcpEditServerButton, mcpRemoveServerButton, mcpToggleServerButton).Spacing(1)
-).Spacing(1).HorizontalAlignment(Align.Stretch);
 
 var mcpToolsScreen = new Center(
     new Group()
-        .TopLeftText(" 🔧 MCP Servers")
+        .TopLeftText(" 🔧 MCP Tools")
         .Padding(2)
-        .MaxWidth(90)
+        .MaxWidth(80)
         .Content(
             new VStack(
-                mcpServersSection,
-                mcpCloseButton
+                new TextBlock("Select a tool and press Toggle (or Enter/Space) to enable or disable it.") { Wrap = true },
+                new TextBlock("Enabled tools (✓) are sent with every chat message to the model.") { Wrap = true },
+                mcpToolsListBox,
+                new HStack(mcpToggleButton, mcpCloseButton).Spacing(1)
             ).Spacing(1).HorizontalAlignment(Align.Stretch)
         )
-        .HorizontalAlignment(Align.Stretch)
-);
-
-var stdioSection = (Visual)new VStack(
-    new Markup("[dim]── stdio settings ────────────────────────────────────────────────────[/]") { Wrap = false },
-    new TextBlock("Command  (executable path or name, e.g. node, /usr/bin/mcp-server)") { Wrap = true },
-    serverFormCommandTextBox,
-    new TextBlock("Arguments  (space-separated, e.g. server.js --port 3000)") { Wrap = true },
-    serverFormArgsTextBox,
-    new TextBlock("Environment variables  (KEY=VALUE;KEY2=VALUE2  —  blank to skip)") { Wrap = true },
-    serverFormEnvVarsTextBox
-).Spacing(1).HorizontalAlignment(Align.Stretch);
-
-var httpSection = (Visual)new VStack(
-    new Markup("[dim]── http settings ─────────────────────────────────────────────────────[/]") { Wrap = false },
-    new TextBlock("URL  (e.g. http://localhost:8080/mcp)") { Wrap = true },
-    serverFormUrlTextBox,
-    new TextBlock("Headers  (Name:Value;Name2:Value2  —  blank to skip)") { Wrap = true },
-    serverFormHeadersTextBox
-).Spacing(1).HorizontalAlignment(Align.Stretch);
-
-var serverFormBody = (Visual)new VStack(
-    new TextBlock("Name") { Wrap = true },
-    serverFormNameTextBox,
-    new TextBlock("Transport type  (↑↓ to select)") { Wrap = true },
-    serverFormTypeListBox,
-    new ComputedVisual(() => serverFormTransportIdx.Value == 0 ? stdioSection : httpSection),
-    new HStack(serverFormSaveButton, serverFormCancelButton).Spacing(1)
-).Spacing(1).HorizontalAlignment(Align.Stretch);
-
-var serverFormScroller = new ScrollViewer(serverFormBody)
-    .VerticalScrollEnabled(true)
-    .MaxHeight(28);
-
-var serverFormScreen = new Center(
-    new Group()
-        .TopLeftText(() => (Visual)new Markup(mcpServerFormIsEdit.Value ? " ✏  Edit MCP Server" : " ➕  Add MCP Server"))
-        .Padding(2)
-        .MaxWidth(90)
-        .Content(serverFormScroller)
         .HorizontalAlignment(Align.Stretch)
 );
 
@@ -558,7 +350,7 @@ void StartChat(string modelName)
     sendCts = new CancellationTokenSource();
     ollama.SelectedModel = modelName;
     var thinkingMode = GetThinkingModeForModel(modelName);
-    chat = BuildChat(thinkingMode);
+    chat = new Chat(ollama) { Think = thinkingMode };
     currentModelSupportsThinking.Value = thinkingMode is not null;
     selectedModel.Value = modelName;
     modelSelected.Value = true;
@@ -575,25 +367,9 @@ void NewChat()
     sendCts = new CancellationTokenSource();
     ollama.SelectedModel = model;
     var thinkingMode = GetThinkingModeForModel(model);
-    chat = BuildChat(thinkingMode);
+    chat = new Chat(ollama) { Think = thinkingMode };
     currentModelSupportsThinking.Value = thinkingMode is not null;
     ResetChatScreen($"[dim]━━━ New chat with [accent]{EscapeMarkup(model)}[/] ━━━[/]");
-}
-
-Chat BuildChat(bool? thinkingMode)
-{
-    const string ToolSystemPrompt =
-        "You have access to tools. When completing a task that requires multiple steps, " +
-        "call all necessary tools in sequence. After receiving each tool result, continue " +
-        "calling additional tools as needed until the task is complete. Only provide your " +
-        "final text response once all necessary tool calls have been made.";
-
-    var hasTools = mcpManager.McpTools.Count > 0 || toolRegistry.Length > 0;
-    var built = hasTools
-        ? new Chat(ollama, ToolSystemPrompt) { Think = thinkingMode }
-        : new Chat(ollama) { Think = thinkingMode };
-    built.ToolInvoker = new McpAwareToolInvoker();
-    return built;
 }
 
 void SwitchModel()
@@ -835,7 +611,7 @@ var splashScreen = new Center(
                     ? (Visual)new Markup($"[{color}]{splashAscii[i]}[/]") { Wrap = false }
                     : new TextBlock(string.Empty) { Wrap = false });
             }
-            return (Visual)new VStack([.. artLines]).Spacing(0);
+            return (Visual)new VStack(artLines.ToArray()).Spacing(0);
         }),
         new TextBlock(string.Empty) { Wrap = false },
         new ComputedVisual(() =>
@@ -851,7 +627,8 @@ var splashScreen = new Center(
         new ComputedVisual(() =>
         {
             int frame = splashFrame.Value;
-            return frame < SplashBarStart + SplashTaglineDelay ? null : (Visual)new Markup("  [dim]Your local AI companion[/]") { Wrap = false };
+            if (frame < SplashBarStart + SplashTaglineDelay) return null;
+            return (Visual)new Markup("  [dim]Your local AI companion[/]") { Wrap = false };
         })
     ).Spacing(0)
 );
@@ -873,10 +650,9 @@ var footer = new Footer
 var mainLayout = new DockLayout()
     .Top(header)
     .Content(new ComputedVisual(() =>
-        mcpServerFormOpen.Value ? (Visual)serverFormScreen :
-        mcpToolsOpen.Value      ? (Visual)mcpToolsScreen   :
-        settingsOpen.Value      ? (Visual)settingsScreen   :
-        modelSelected.Value     ? chatScreen               : modelScreen))
+        mcpToolsOpen.Value ? (Visual)mcpToolsScreen :
+        settingsOpen.Value  ? (Visual)settingsScreen  :
+        modelSelected.Value ? chatScreen              : modelScreen))
     .Bottom(new VStack(new CommandBar(), footer).Spacing(0))
     .HorizontalAlignment(Align.Stretch)
     .VerticalAlignment(Align.Stretch);
@@ -949,8 +725,7 @@ toastHost.AddCommand(new Command
     Presentation = CommandPresentation.CommandBar | CommandPresentation.CommandPalette,
     Execute = _ =>
     {
-        mcpServerFormOpen.Value = false;
-        RebuildMcpServersList();
+        RebuildMcpToolsList();
         mcpToolsOpen.Value = true;
     },
 });
@@ -1012,5 +787,4 @@ Func<TerminalRunningContext, ValueTask<TerminalLoopResult>> loopFunc= async (ctx
     return TerminalLoopResult.Continue;
 };
 
-_ = mcpManager.RefreshAsync(settings.McpServers);
 await Terminal.RunAsync(toastHost, loopFunc, new TerminalRunOptions());

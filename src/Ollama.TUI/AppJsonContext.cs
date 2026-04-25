@@ -38,6 +38,4 @@ namespace Ollama.TUI;
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(Dictionary<string, bool>))]
-[JsonSerializable(typeof(McpServerConfig))]
-[JsonSerializable(typeof(List<McpServerConfig>))]
 internal partial class AppJsonContext : JsonSerializerContext;
