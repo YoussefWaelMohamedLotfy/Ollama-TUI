@@ -12,11 +12,13 @@ A fast, keyboard-driven **Terminal UI** for chatting with your local [Ollama](ht
 - **Model picker** — lists all locally available Ollama models on startup
 - **Streaming responses** — see the assistant reply token-by-token in real time
 - **Thinking/reasoning display** — shows the model's internal reasoning (`💭 Thinking…`) before the final answer for supported models
-- **Tool calling** — built-in `get_current_datetime` tool; the model can call it automatically when asked about the time
+- **Tool calling** — built-in file tools (`ReadFile`, `WriteFile`, `ListDirectory`, `CreateDirectory`) plus `get_current_datetime`; the model can call them automatically when needed
+- **MCP tools** — connect external MCP servers and expose their tools to the model
 - **Multi-line input** — press `Ctrl+J` to insert a newline in the prompt
 - **Prompt history** — navigate previous messages with `↑` / `↓`
 - **New chat** — reset the conversation without leaving the app (`Ctrl+N`)
 - **Switch model** — return to model selection mid-session (`Ctrl+W`)
+- **MCP tools panel** — manage MCP servers from inside the app (`Ctrl+T`)
 - **Settings panel** — change the Ollama server URL and colour theme at runtime (`Ctrl+P`); settings persist to disk
 - **Three themes** — Default (dark), Light, Terminal
 - **NativeAOT** — single self-contained executable, instant startup, no .NET runtime installation needed
@@ -59,6 +61,14 @@ dotnet publish src/Ollama.TUI/Ollama.TUI.csproj --configuration Release -o ./nat
 
 > **Note (Windows):** NativeAOT requires the **Desktop development with C++** workload from Visual Studio Build Tools.
 
+## Current solution contents
+
+- **App project:** `src/Ollama.TUI/Ollama.TUI.csproj`
+- **Tests:** `tests/Ollama.TUI.Tests/Ollama.TUI.Tests.csproj`
+- **Target framework:** `.NET 10`
+- **Publish mode:** `PublishAot=true`
+- **Central package management:** enabled via `Directory.Packages.props`
+
 ---
 
 ## Keyboard Shortcuts
@@ -70,6 +80,7 @@ dotnet publish src/Ollama.TUI/Ollama.TUI.csproj --configuration Release -o ./nat
 | `↑` / `↓` | Navigate prompt history |
 | `Ctrl+N` | Start a new chat (same model) |
 | `Ctrl+W` | Switch to a different model |
+| `Ctrl+T` | Open MCP tools panel |
 | `Ctrl+P` | Open settings |
 | `Ctrl+Q` | Quit |
 
@@ -85,13 +96,27 @@ Settings are stored at:
 |---|---|---|
 | `OllamaServerUrl` | `http://localhost:11434` | URL of the Ollama API server |
 | `Theme` | `Default` | UI colour theme: `Default`, `Light`, or `Terminal` |
+| `SelectedModel` | _none_ | Last selected Ollama model |
+| `McpServers` | _empty_ | Configured external MCP servers and their enabled state |
+| `McpToolsEnabled` | _empty_ | Persisted enable/disable state for MCP tools |
 
 ---
+
+## MCP server support
+
+The app can load external MCP servers in addition to the built-in file tools.
+
+- **stdio transport** — run a local process and communicate over stdin/stdout
+- **HTTP transport** — connect to an HTTP/SSE endpoint
+
+Each MCP server can be enabled or disabled from the MCP tools panel, and the configuration is saved in settings.
 
 ## Tech Stack
 
 | Library | Purpose |
 |---|---|
-| [OllamaSharp](https://github.com/awaescher/OllamaSharp) `5.4.25` | Ollama REST API client |
-| [XenoAtom.Terminal.UI](https://github.com/xoofx/XenoAtom.Terminal) `2.8.1` | Terminal UI framework |
+| [OllamaSharp](https://github.com/awaescher/OllamaSharp) `5.4.25` | Ollama REST API client and tool calling |
+| [ModelContextProtocol.Core](https://github.com/modelcontextprotocol) `1.2.0` | MCP client integration |
+| [XenoAtom.Terminal.UI](https://github.com/xoofx/XenoAtom.Terminal) `2.9.4` | Terminal UI framework |
+| [TUnit](https://github.com/askthecode/TUnit) `1.39.0` | Test framework |
 | .NET 10 + NativeAOT | Runtime & AOT compilation |
