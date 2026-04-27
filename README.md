@@ -4,6 +4,7 @@ A fast, keyboard-driven **Terminal UI** for chatting with your local [Ollama](ht
 
 ![NativeAOT Build Validation](https://github.com/YoussefWaelMohamedLotfy/Ollama-TUI/actions/workflows/nativeaot-validation.yml/badge.svg)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/YoussefWaelMohamedLotfy/Ollama-TUI/badge)](https://api.securityscorecards.dev/projects/github.com/YoussefWaelMohamedLotfy/Ollama-TUI)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12666/badge)](https://www.bestpractices.dev/projects/12666)
 
 ---
 
