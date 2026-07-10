@@ -3,7 +3,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.1" />
     <PackageVersion Include="OllamaSharp" Version="5.4.25" />
     <PackageVersion Include="TUnit" Version="1.58.0" />
     <PackageVersion Include="XenoAtom.Terminal.UI" Version="3.7.5" />
