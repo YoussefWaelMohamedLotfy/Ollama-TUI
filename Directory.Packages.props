@@ -5,7 +5,7 @@
   <ItemGroup>
     <PackageVersion Include="ModelContextProtocol.Core" Version="1.4.1" />
     <PackageVersion Include="OllamaSharp" Version="5.4.27" />
-    <PackageVersion Include="TUnit" Version="1.60.0" />
+    <PackageVersion Include="TUnit" Version="1.61.0" />
     <PackageVersion Include="XenoAtom.Terminal.UI" Version="3.7.5" />
   </ItemGroup>
 </Project>
