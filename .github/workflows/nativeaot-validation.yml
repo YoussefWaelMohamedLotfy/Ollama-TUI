@@ -54,7 +54,7 @@ jobs:
       run: dotnet-releaser build --github-token "${{ secrets.GITHUB_TOKEN }}" dotnet-releaser.toml
 
     - name: Upload Linux packages
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: ollama-tui-packages-linux
         path: artifacts-dotnet-releaser/
@@ -84,7 +84,7 @@ jobs:
       run: dotnet-releaser build --github-token "${{ secrets.GITHUB_TOKEN }}" dotnet-releaser.macos.toml
 
     - name: Upload macOS packages
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: ollama-tui-packages-macos
         path: artifacts-dotnet-releaser/
@@ -125,7 +125,7 @@ jobs:
       shell: pwsh
 
     - name: Upload Windows installer artifact
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: ollama-tui-installer-windows
         path: ./installer-output/
